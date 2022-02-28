@@ -1,1 +1,4 @@
-Build
+/target
+.DS_Store
+*.bak
+
