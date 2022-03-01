@@ -2,50 +2,78 @@
 #![allow(dead_code)]
 
 use chrono::{Utc, Duration, DateTime, NaiveDateTime};
+use indicatif::{ProgressBar, ProgressStyle};
 use json::JsonValue;
 use json::object;
+use reqwest::blocking::Response;
 use reqwest::blocking::Client;
 use reqwest::header::{ HeaderMap, HeaderValue} ;
 use std::collections::HashMap;
+use std::fmt;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use indicatif::{ProgressBar, ProgressStyle};
+use serde::{Deserialize, Serialize};
+use serde_json::Result;
 
-struct CacheEntry {
-    filename: String,
-    date: DateTime<Utc>,
+#[derive(Debug, Clone)]
+pub struct Error {
+    message: String,
 }
 
+impl Error {
+    pub fn new(message: &str) -> Self {
+        Self { message: String::from(message) }
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self { message: e.to_string() }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct CacheEntry {
+    cache_file: String,
+    date: i64,
+    max_age: i64,
+    filename: String,
+}
+
+// DateTime::from_utc(NaiveDateTime::from_timestamp(obj["date"].as_i64().unwrap(), 0), Utc);
 impl CacheEntry {
-    fn new(filename: &str) -> Self {
+    fn new(cache_file: &str, max_age: i64, filename: &str) -> Self {
         Self {
+            cache_file : String::from(cache_file),
+            date: Utc::now().timestamp(),
+            max_age: max_age,
             filename: String::from(filename),
-            date: Utc::now()
         }
     }
 }
 
-impl From<&JsonValue> for CacheEntry {
-    fn from(value: &JsonValue) -> Self {
-        match value {
-            JsonValue::Object(obj) => {
-                let filename = String::from(obj["file"].as_str().unwrap());
-                let date = DateTime::from_utc(NaiveDateTime::from_timestamp(obj["date"].as_i64().unwrap(), 0), Utc);
-                CacheEntry { filename, date }
-            }
+#[derive(Serialize, Deserialize, Debug)]
+struct Cache {
+    cache: HashMap<String,CacheEntry>,
+}
 
-            _ => {
-                panic!("Invalid value type");
-            }
-        }
+impl Cache {
+    fn new() -> Cache {
+        Cache { cache: HashMap::new() }
     }
 }
 
 pub struct Downloader {
     cachedir: PathBuf,
     index_file: PathBuf,
-    cache: HashMap<String,CacheEntry>,
+    cache: Cache,
 }
 
 impl Downloader {
@@ -64,72 +92,69 @@ impl Downloader {
         url
     }
 
-    fn load_cache(index_file: &Path) -> HashMap<String,CacheEntry> {
-        let mut result: HashMap<String,CacheEntry> = HashMap::new();
+    fn load_cache(index_file: &Path) -> Cache {
+        let mut result = Cache::new();
 
         if let Ok(mut f) = File::open(index_file) {
-            let mut contents = String::new();
-            if let Ok(_) = f.read_to_string(&mut contents) {
-                if let Ok(cache_data) = json::parse(&contents) {
-                    if let JsonValue::Object(obj) = cache_data {
-                        for (k, v) in obj.iter() {
-                            let entry = CacheEntry::from(v);
-                            result.insert(String::from(k), entry);
-                        }
-                    }
-                }
+            if let Ok(cache) = serde_json::from_reader(f) {
+                result = cache;
             }
         }
 
         result
     }
 
-    fn save_cache(index_file: &Path, cache: &HashMap<String,CacheEntry>) {
-        let mut data = object!{};
-        for (k, entry) in cache {
-            let jentry = object! {
-                "file": entry.filename.clone(),
-                "date": entry.date.timestamp()
-            };
-            data.insert(k, jentry);
-        }
+    fn save_cache(index_file: &Path, cache: &Cache) {
         let mut f = File::create(index_file).expect("Failed to write cache file");
-        f.write_all(data.dump().as_bytes()).expect("Failed to write cache file");
+        serde_json::to_writer(f, cache);
     }
 
-    fn get_cache_entry(&mut self, url: &str) -> Option<PathBuf> {
+    fn get_cache_entry(&mut self, url: &str) -> Option<CacheEntry> {
         let url = Self::normalize_url(url);
-        let entry = self.cache.get(&url)?;
+        let entry = self.cache.cache.get(&url)?;
         let now = Utc::now();
 
-        if Utc::now() - entry.date > Duration::hours(1) {
+        let entry_date = DateTime::from_utc(NaiveDateTime::from_timestamp(entry.date, 0), Utc);
+        let max_age = Duration::seconds(entry.max_age);
+        if Utc::now() - entry_date > max_age {
             self.remove_cache_entry(&url);
             None
         } else {
-            let mut result = PathBuf::from(&self.cachedir);
-            result.push(entry.filename.clone());
-            Some(result)
+            Some(entry.clone())
         }
     }
 
-    fn add_cache_entry(&mut self, url: &str, file: &str) {
-        let entry = CacheEntry::new(file);
-        self.cache.insert(String::from(url), entry);
+    fn add_cache_entry(&mut self, url: &str, file: &Path, max_age: i64, filename: &str) {
+        let url = Self::normalize_url(url);
+        let cache_file = String::from(file.file_name().unwrap().to_str().unwrap());
+        self.cache.cache.insert(url, CacheEntry::new(&cache_file, max_age, filename));
         Self::save_cache(&self.index_file, &self.cache);
     }
 
     fn remove_cache_entry(&mut self, url: &str) {
         let url = Self::normalize_url(url);
-        let entry = self.cache.remove(&url);
+        let entry = self.cache.cache.remove(&url);
         if let Some(entry) = entry {
-            let file = Path::new(&self.cachedir).join(entry.filename);
+            let file = Path::new(&self.cachedir).join(entry.cache_file);
             std::fs::remove_file(file);
+        }
+    }
+
+    fn get_filename(r: &Response) -> Option<String> {
+        match r
+            .url()
+            .path_segments()
+            .and_then(|segments| segments.last())
+            .and_then(|name| if name.is_empty() { None } else { Some(name) }) {
+                None => None,
+                Some(s) => Some(String::from(s))
         }
     }
 
     pub fn download_to_string(&mut self, url: &str) -> Option<String> {
         let cache_entry = self.get_cache_entry(url);
-        if let Some(path) = cache_entry {
+        if let Some(cache_entry) = cache_entry {
+            let path = Path::new(&self.cachedir).join(&cache_entry.cache_file);
             match File::open(path) {
                 Ok(mut f) => {
                     let mut contents = String::new();
@@ -152,8 +177,9 @@ impl Downloader {
 
         let client = Client::new();
         let mut req = client.get(url);
-
-        let result = req.send().ok()?.text().ok()?;
+        let response = req.send().ok()?;
+        let filename = Self::get_filename(&response);
+        let result = response.text().ok()?;
         let mut cachefile = tempfile::Builder::new()
             .prefix("c_")
             .suffix(".cache")
@@ -162,11 +188,10 @@ impl Downloader {
         let mut f = cachefile.as_file_mut();
         f.write_all(result.as_bytes());
 
-        let filename = cachefile.path().file_name().unwrap().to_str().unwrap();
-        self.add_cache_entry(url, filename);
+        self.add_cache_entry(url, cachefile.path(), 3600, &filename.unwrap_or(String::from("download")));
         cachefile.keep();
-        
-        Some(result)
+
+        Some(String::from(result))
     }
 
     /*
@@ -174,42 +199,26 @@ impl Downloader {
     */
     pub fn download(&mut self, url: &str, destdir: &Path) -> Option<PathBuf> {
         let cache_entry = self.get_cache_entry(url);
-        if let Some(_) = cache_entry {
-            return cache_entry;
+        if let Some(cache_entry) = cache_entry {
+            let cache_file = Path::new(&self.cachedir).join(&cache_entry.cache_file);
+            if !cache_file.exists() {
+                self.remove_cache_entry(url);
+            }
+
+            let dest_file = Path::new(destdir).join(&cache_entry.filename);
+            if let Ok(_) = std::fs::copy(cache_file, &dest_file) {
+                return Some(dest_file);
+            }
         }
 
         let client = Client::new();
         let mut req = client.get(url);
-
         let mut response = req.send().ok()?;
-        let mut filename = String::from("");
-        let url_filename = response
-            .url()
-            .path_segments()
-            .and_then(|segments| segments.last())
-            .and_then(|name| if name.is_empty() { None } else { Some(name) });
-
-        let filename = match url_filename {
-            None => {
-                let tmpfile = tempfile::Builder::new()
-                    .prefix("download_")
-                    .tempfile_in(destdir)
-                    .ok()?;
-                let tmpfile = tmpfile.path();
-                let tmpfile = tmpfile.to_str().unwrap_or("outfile");
-                let tmpfile = String::from(tmpfile);
-                String::from(tmpfile)
-            }
-
-            Some(filename) => String::from(filename)
-        };
-        
-        let out_path = Path::new(destdir).join(filename);
-
-        let mut outfile = File::create(&out_path).ok()?;
         let content_length = response.content_length();
-
-        // let content_length = None;
+        let mut tmpfile = tempfile::Builder::new()
+            .prefix("download_")
+            .tempfile_in(&self.cachedir)
+            .ok()?;
         let progress = match content_length {
             Some(len) => {
                 let pb = ProgressBar::new(len);
@@ -227,7 +236,8 @@ impl Downloader {
                 pb
             }
         };
-        
+            
+        let mut outfile = tmpfile.as_file_mut();
         let mut buf = [ 0u8; 65536 ];
         while let Ok(len) = response.read(&mut buf) {
             if len == 0 {
@@ -238,6 +248,29 @@ impl Downloader {
             progress.inc(len as u64);
         }
         progress.finish();
-        Some(out_path)
+
+        let filename = Self::get_filename(&response);
+        let tmp_path = tmpfile.path().to_path_buf();
+        self.add_cache_entry(url, &tmp_path, 30i64 * 24i64 * 3600i64, &filename.clone().unwrap_or(String::from("download")));
+        tmpfile.keep();
+
+        let dest_file = match filename {
+            Some(filename) => {
+                PathBuf::from(destdir).join(&filename)
+            }
+
+            None => {
+                let tmpfile = tempfile::Builder::new()
+                    .prefix("download_")
+                    .tempfile_in(destdir)
+                    .ok()?;
+                let result = tmpfile.path().to_path_buf();
+                tmpfile.keep();
+                result
+            }
+        };
+
+        std::fs::copy(&tmp_path, &dest_file);
+        Some(dest_file.to_path_buf())
     }
 }
