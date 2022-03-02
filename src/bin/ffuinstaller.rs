@@ -3,13 +3,46 @@
 
 use chrono::Duration;
 use chrono::prelude::*;
-use ffuinstaller::Downloader;
-use ffuinstaller::Error;
+use firefox_user_installer::Downloader;
+use firefox_user_installer::Error;
 use regex::Regex;
 use std::collections::HashMap;
 use std::os::unix::process::CommandExt;
 use std::path::{ Path, PathBuf };
 use std::process;
+use std::thread;
+use std::sync::{Arc, Mutex};
+use std::rc::Rc;
+
+use gtk::prelude::*;
+use gtk::{
+    Application,
+    ApplicationWindow,
+    Button,
+    Grid,
+    Label,
+    ComboBox,
+    ComboBoxText,
+    Window,
+    ProgressBar,
+    MessageDialog,
+    DialogFlags,
+    MessageType,
+    ButtonsType
+};
+use gtk::glib;
+use gtk::glib::clone;
+
+enum Progress {
+    Status(String),
+    Percent(i64,i64),
+}
+
+enum InstallEvent {
+    Progress(Progress),
+    Success,
+    Error(Error),
+}
 
 fn get_datadir() -> PathBuf {
     let dirs = directories::ProjectDirs::from("", "", "firefox-user-installer").unwrap();
@@ -30,11 +63,14 @@ fn get_cachedir(datadir: &Path) -> PathBuf {
     result
 }
 
-fn install(datadir: &Path, appdir: &Path, browser: &str, installer: &str, language: &str) -> Result<(),Error> {
+fn install<F>(datadir: &Path, appdir: &Path, browser: &str, architecture: &str, lang: &str, observer: F)  -> Result<(),Error>
+where
+    F: Fn(Progress)
+{
     let cachedir = get_cachedir(datadir);
     let mut downloader = Downloader::new(&cachedir);
 
-    let url = format!("https://download.mozilla.org/?product={}&os={}&lang={}", browser, installer, language);
+    let url = format!("https://download.mozilla.org/?product={}&os={}&lang={}", browser, architecture, lang);
     // let url = String::from("http://localhost:8000/firefox-95.0.tar.bz2");
 
     let workdir = tempfile::Builder::new()
@@ -42,10 +78,13 @@ fn install(datadir: &Path, appdir: &Path, browser: &str, installer: &str, langua
         .tempdir()
         .unwrap();
  
-    let outpath = downloader.download(&url, workdir.path()).unwrap();
+    observer(Progress::Status(String::from("Downloading...")));
+    let outpath = downloader.download_with_progress(&url, workdir.path(), |current,total| {
+        observer(Progress::Percent(current, total));
+    })?;
 
     /* Extract into appdir */
-    println!("Extracting...");
+    observer(Progress::Status(String::from("Extracting...")));
     std::fs::create_dir_all(appdir)?;
     let status = process::Command::new("tar")
         .arg("xf")
@@ -66,7 +105,27 @@ fn install(datadir: &Path, appdir: &Path, browser: &str, installer: &str, langua
     Ok(())
 }
 
-fn main() {
+fn languages(downloader: &mut Downloader) -> Vec<(String,String)> {
+    let mut result = Vec::new();
+
+    let contents = downloader.download_to_string("https://www.mozilla.org/en-US/firefox/all/#product-desktop-release").unwrap();
+
+    let rex0 = Regex::new(r#"(?s)<select id="select_desktop_release_language".*?>.*?</select>"#).unwrap();
+    let mat0 = rex0.find(&contents).unwrap();
+
+    let rex1 = Regex::new(r#"<option value="(.*?)">(.*?)</option>"#).unwrap();
+    result.push((String::from("en-US"), String::from("English (US)")));
+    for mat in rex1.captures_iter(mat0.as_str()) {
+        let code = mat.get(1).unwrap().as_str();
+        let name = mat.get(2).unwrap().as_str();
+
+        result.push((String::from(code), String::from(name)));
+    }
+
+    result
+}
+
+fn main2() {
     let datadir = get_datadir();
     let cachedir = get_cachedir(&datadir);
     let appdir = Path::new(&datadir).join("app");
@@ -103,10 +162,226 @@ fn main() {
             language.insert(String::from(name), String::from(code));
         }
         
-        install(&datadir, &appdir, &browser["Firefox"], &installer["Linux 64-bit"], &language["English (US)"]);
+        install(&datadir, &appdir, &browser["Firefox"], &installer["Linux 64-bit"], &language["English (US)"], |progress| {
+            match progress {
+                Progress::Status(status) => {
+                    println!("{}", status);
+                }
+                Progress::Percent(current, total) => {
+                    println!("{}/{}", current, total);
+                }
+            }
+        });
     }
 
     let error = process::Command::new(exe).exec();
     panic!("Error: {:?}", error);
+}
+
+fn on_ok(app: Rc<Application>, browser: &str, architecture: &str, lang: &str) {
+    let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+
+    let window = Window::builder()
+        .application(app.as_ref())
+        .title("Installing")
+        .default_width(350)
+        .default_height(56)
+        .window_position(gtk::WindowPosition::Center)
+        .build();
+    
+    let grid = Grid::builder()
+        .column_spacing(5)
+        .row_spacing(5)
+        .margin(5)
+        .build();
+    window.add(&grid);
+
+    let progressbar = ProgressBar::builder()
+        .show_text(true)
+        .text("Installing...")
+        .expand(true)
+        .build();
+    grid.attach(&progressbar, 0, 0, 1, 1);
+    window.show_all();
+
+    rx.attach(None, move |event| {
+        match event {
+            InstallEvent::Progress(progress) => match progress {
+                Progress::Status(text) => {
+                    progressbar.set_text(Some(&text));
+                }
+                Progress::Percent(current, total) => {
+                    if total != -1 {
+                        let fraction = current as f64 / total as f64;
+                        progressbar.set_fraction(fraction);
+                    } else {
+                        progressbar.pulse();
+                    }
+                }
+            }
+
+            InstallEvent::Success => {
+                window.close();
+                return Continue(false);
+            }
+            InstallEvent::Error(err) => {
+                let dlg = MessageDialog::new(
+                    Some(&window),
+                    DialogFlags::MODAL,
+                    MessageType::Error,
+                    ButtonsType::Ok,
+                    &err.to_string());
+                dlg.run();
+                dlg.close();
+                window.close();
+                return Continue(false);
+            }
+        }
+        Continue(true)
+    });
+
+    let browser = String::from(browser);
+    let architecture = String::from(architecture);
+    let lang = String::from(lang);
+    thread::spawn(move || {
+        let datadir = get_datadir();
+        let appdir = Path::new(&datadir).join("app");
+        let result = install(&datadir, &appdir, &browser, &architecture, &lang, |progress| {
+            tx.send(InstallEvent::Progress(progress));
+        });
+
+        match result {
+            Ok(_) => {
+                tx.send(InstallEvent::Success);
+            }
+            Err(e) => {
+                tx.send(InstallEvent::Error(e));
+            }
+        }
+    });
+
+    
+}
+
+fn build_ui(app: Rc<Application>) {
+    let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
+
+    let window = Rc::new(ApplicationWindow::builder()
+        .application(app.as_ref())
+        .title("Firefox User Installer")
+        .default_width(350)
+        .default_height(70)
+        .window_position(gtk::WindowPosition::Center)
+        .build());
+
+    let grid = Grid::builder()
+        .border_width(5)
+        .column_spacing(5)
+        .row_spacing(5)
+        .build();
+    window.add(&grid);
+
+    let label = Label::builder()
+        .label("Browser:")
+        .build();
+    grid.attach(&label, 0, 0, 1, 1);
+
+    let mut browser_combo = ComboBoxText::builder()
+        .build();
+    browser_combo.append(Some("firefox-latest-ssl"), "Firefox");
+    browser_combo.append(Some("firefox-beta-latest-ssl"), "Firefox Beta");
+    browser_combo.append(Some("firefox-devedition-latest-ssl"), "Firefox Developer Edition");
+    browser_combo.append(Some("firefox-nightly-latest-l10n-ssl"), "Firefox Nightly");
+    browser_combo.append(Some("firefox-esr-latest-ssl"), "Firefox Extended Support Release");
+    browser_combo.set_active_id(Some("firefox-latest-ssl"));
+    grid.attach(&browser_combo, 1, 0, 1, 1);
+
+    let label = Label::builder()
+        .label("Architecture:")
+        .build();
+    grid.attach(&label, 0, 1, 1, 1);
+
+    let mut architecture_combo = ComboBoxText::builder().build();
+    architecture_combo.append(Some("linux64"), "Linux 64-bit");
+    architecture_combo.append(Some("linux"), "Linux 32-bit");
+    architecture_combo.set_active_id(Some("linux64"));
+    grid.attach(&architecture_combo, 1, 1, 1, 1);
+
+    let label = Label::builder()
+        .label("Language:")
+        .build();
+    grid.attach(&label, 0, 2, 1, 1);
+    
+    let language_combo = Rc::new(ComboBoxText::new());
+    grid.attach(language_combo.as_ref(), 1, 2, 1, 1);
+    thread::spawn(move || {
+        let datadir = get_datadir();
+        let cachedir = get_cachedir(&datadir);
+        let mut downloader = Downloader::new(&cachedir);
+        let languages = languages(&mut downloader);
+        tx.send(languages);
+    });
+
+    let ok_button = Rc::new(Button::builder()
+        .label("OK")
+        .sensitive(false)
+        .build());
+    ok_button.connect_clicked(clone!(@strong app, @strong window, @strong language_combo, @strong ok_button => move |_| {
+        let browser = browser_combo.active_id().unwrap();
+        let architecture = architecture_combo.active_id().unwrap();
+        let language = language_combo.active_id().unwrap();
+
+        on_ok(Rc::clone(&app), &browser, &architecture, &language);
+
+        window.close();
+    }));
+    grid.attach(ok_button.as_ref(), 0, 3, 2, 1);
+
+    rx.attach(None, clone!(@strong language_combo, @strong ok_button => move |languages| {
+        for lang in languages.iter() {
+            language_combo.append(Some(&lang.0), &lang.1);
+        }
+        language_combo.set_active_id(Some("en-US"));
+        ok_button.set_sensitive(true);
+        Continue(false)
+    }));
+
+    window.show_all();
+}
+
+fn main() {
+    let datadir = get_datadir();
+    let cachedir = get_cachedir(&datadir);
+    let appdir = Path::new(&datadir).join("app");
+    let exe = Path::new(&appdir).join("firefox/firefox");
+    
+    if !exe.exists() {
+        let application = Rc::new(Application::builder()
+            .application_id("com.example.FirstGtkApp")
+            .build());
+
+        application.connect_activate(clone!(@strong application => move |_| {
+            build_ui(Rc::clone(&application));
+        }));
+
+        application.run();
+    }
+    
+    let error = process::Command::new(exe).exec();
+    let application = Rc::new(Application::builder()
+        .application_id("com.example.FirstGtkApp")
+        .build());
+    application.connect_activate(clone!(@strong application => move |_| {
+        let dlg = MessageDialog::new::<MessageDialog>(
+            None,
+            DialogFlags::MODAL,
+            MessageType::Error,
+            ButtonsType::Ok,
+            &format!("Cannot launch firefox: {}", &error.to_string()));
+        dlg.set_window_position(gtk::WindowPosition::Center);
+        dlg.run();
+        dlg.close();
+    }));
+    application.run();
 }
 

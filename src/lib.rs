@@ -2,7 +2,6 @@
 #![allow(dead_code)]
 
 use chrono::{Utc, Duration, DateTime, NaiveDateTime};
-use indicatif::{ProgressBar, ProgressStyle};
 use json::JsonValue;
 use json::object;
 use reqwest::blocking::Response;
@@ -14,7 +13,6 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
-use serde_json::Result;
 
 #[derive(Debug, Clone)]
 pub struct Error {
@@ -35,6 +33,18 @@ impl fmt::Display for Error {
 
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
+        Self { message: e.to_string() }
+    }
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(e: reqwest::Error) -> Self {
+        Self { message: e.to_string() }
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(e: serde_json::Error) -> Self {
         Self { message: e.to_string() }
     }
 }
@@ -194,10 +204,17 @@ impl Downloader {
         Some(String::from(result))
     }
 
+    pub fn download(&mut self, url: &str, destdir: &Path) -> Result<PathBuf,Error> {
+        self.download_with_progress(url, destdir, |c,t| {})
+    }
+
     /*
         This does not use a cache (but we still let the user manually add a cache entry)
     */
-    pub fn download(&mut self, url: &str, destdir: &Path) -> Option<PathBuf> {
+    pub fn download_with_progress<F>(&mut self, url: &str, destdir: &Path, progress: F) -> Result<PathBuf,Error>
+    where
+        F: Fn(i64, i64)
+    {
         let cache_entry = self.get_cache_entry(url);
         if let Some(cache_entry) = cache_entry {
             let cache_file = Path::new(&self.cachedir).join(&cache_entry.cache_file);
@@ -207,36 +224,28 @@ impl Downloader {
 
             let dest_file = Path::new(destdir).join(&cache_entry.filename);
             if let Ok(_) = std::fs::copy(cache_file, &dest_file) {
-                return Some(dest_file);
+                return Ok(dest_file);
             }
         }
 
         let client = Client::new();
         let mut req = client.get(url);
-        let mut response = req.send().ok()?;
+        let mut response = req.send()?;
+        let status = response.status();
+        if !response.status().is_success() {
+            return Err(Error::new(&response.status().to_string()));
+        }
+
         let content_length = response.content_length();
         let mut tmpfile = tempfile::Builder::new()
             .prefix("download_")
-            .tempfile_in(&self.cachedir)
-            .ok()?;
-        let progress = match content_length {
-            Some(len) => {
-                let pb = ProgressBar::new(len);
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                    .template("[{elapsed_precise}] {bar} {bytes}/{total_bytes} {binary_bytes_per_sec} {percent}% [{eta_precise}]"));
-                pb
-            }
-            None => {
-                let pb = ProgressBar::new_spinner();
-                    pb.set_style(
-                        ProgressStyle::default_spinner()
-                        .template("{spinner} [{elapsed_precise}] {bytes}")
-                );
-                pb
-            }
+            .tempfile_in(&self.cachedir)?;
+                
+        let total = match content_length {
+            Some(len) => len as i64,
+            None => -1
         };
-            
+        let mut current = 0i64;
         let mut outfile = tmpfile.as_file_mut();
         let mut buf = [ 0u8; 65536 ];
         while let Ok(len) = response.read(&mut buf) {
@@ -244,10 +253,9 @@ impl Downloader {
                 break;
             }
             outfile.write_all(&buf[0..len]);
-
-            progress.inc(len as u64);
+            current += len as i64;
+            progress(current, total);
         }
-        progress.finish();
 
         let filename = Self::get_filename(&response);
         let tmp_path = tmpfile.path().to_path_buf();
@@ -262,8 +270,7 @@ impl Downloader {
             None => {
                 let tmpfile = tempfile::Builder::new()
                     .prefix("download_")
-                    .tempfile_in(destdir)
-                    .ok()?;
+                    .tempfile_in(destdir)?;
                 let result = tmpfile.path().to_path_buf();
                 tmpfile.keep();
                 result
@@ -271,6 +278,6 @@ impl Downloader {
         };
 
         std::fs::copy(&tmp_path, &dest_file);
-        Some(dest_file.to_path_buf())
+        Ok(dest_file.to_path_buf())
     }
 }
