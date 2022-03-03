@@ -338,6 +338,8 @@ fn build_ui(app: Rc<Application>) {
 }
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+
     let datadir = get_datadir();
     let cachedir = get_cachedir(&datadir);
     let appdir = Path::new(&datadir).join("app");
@@ -354,8 +356,8 @@ fn main() {
 
         application.run();
     }
-    
-    let error = process::Command::new(exe).exec();
+
+    let error = process::Command::new(exe).args(args).exec();
     let application = Rc::new(Application::builder()
         .application_id("io.degaart.firefox-user-installer")
         .build());
