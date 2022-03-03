@@ -357,7 +357,7 @@ fn main() {
     
     if !exe.exists() {
         let application = Rc::new(Application::builder()
-            .application_id("com.example.FirstGtkApp")
+            .application_id("io.degaart.firefox-user-installer")
             .build());
 
         application.connect_activate(clone!(@strong application => move |_| {
@@ -369,7 +369,7 @@ fn main() {
     
     let error = process::Command::new(exe).exec();
     let application = Rc::new(Application::builder()
-        .application_id("com.example.FirstGtkApp")
+        .application_id("io.degaart.firefox-user-installer")
         .build());
     application.connect_activate(clone!(@strong application => move |_| {
         let dlg = MessageDialog::new::<MessageDialog>(
