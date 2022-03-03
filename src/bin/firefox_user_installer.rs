@@ -201,6 +201,7 @@ fn on_ok(app: Rc<Application>, browser: &str, architecture: &str, lang: &str) {
 
             InstallEvent::Success => {
                 window.close();
+                run_app();
                 return Continue(false);
             }
             InstallEvent::Error(err) => {
@@ -240,6 +241,30 @@ fn on_ok(app: Rc<Application>, browser: &str, architecture: &str, lang: &str) {
     });
 
     
+}
+
+fn run_app() {
+    let datadir = get_datadir();
+    let appdir = Path::new(&datadir).join("app");
+    let exe = Path::new(&appdir).join("firefox/firefox");
+
+    let mut proc = process::Command::new(exe);
+    for arg in env::args().skip(1) {
+        if arg != "--reset" {
+            proc.arg(arg);
+        }
+    }
+    
+    let error = proc.exec();
+    let dlg = MessageDialog::new::<MessageDialog>(
+        None,
+        DialogFlags::MODAL,
+        MessageType::Error,
+        ButtonsType::Ok,
+        &format!("Cannot launch firefox: {}", &error.to_string()));
+    dlg.set_window_position(gtk::WindowPosition::Center);
+    dlg.run();
+    dlg.close();
 }
 
 fn build_ui(app: Rc<Application>) {
@@ -344,34 +369,21 @@ fn main() {
     let cachedir = get_cachedir(&datadir);
     let appdir = Path::new(&datadir).join("app");
     let exe = Path::new(&appdir).join("firefox/firefox");
-    
-    if !exe.exists() {
-        let application = Rc::new(Application::builder()
-            .application_id("io.degaart.firefox-user-installer")
-            .build());
+    let reset = env::args().skip(1).find(|s| s == "--reset").is_some();
 
-        application.connect_activate(clone!(@strong application => move |_| {
-            build_ui(Rc::clone(&application));
-        }));
-
-        application.run();
-    }
-
-    let error = process::Command::new(exe).args(args).exec();
     let application = Rc::new(Application::builder()
         .application_id("io.degaart.firefox-user-installer")
         .build());
+
     application.connect_activate(clone!(@strong application => move |_| {
-        let dlg = MessageDialog::new::<MessageDialog>(
-            None,
-            DialogFlags::MODAL,
-            MessageType::Error,
-            ButtonsType::Ok,
-            &format!("Cannot launch firefox: {}", &error.to_string()));
-        dlg.set_window_position(gtk::WindowPosition::Center);
-        dlg.run();
-        dlg.close();
+        if reset || !exe.exists() {
+            build_ui(Rc::clone(&application));
+        } else {
+            run_app();
+        }
     }));
-    application.run();
+
+    let args: &[&str] = &[];
+    application.run_with_args(args);
 }
 
