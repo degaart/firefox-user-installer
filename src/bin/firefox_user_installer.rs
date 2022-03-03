@@ -126,59 +126,6 @@ fn languages(downloader: &mut Downloader) -> Vec<(String,String)> {
     result
 }
 
-fn main2() {
-    let datadir = get_datadir();
-    let cachedir = get_cachedir(&datadir);
-    let appdir = Path::new(&datadir).join("app");
-    let exe = Path::new(&appdir).join("firefox/firefox");
-
-    if !exe.exists() {
-        /* Browser to download */
-        let mut browser: HashMap<String,String> = HashMap::new();
-        browser.insert(String::from("Firefox"), String::from("firefox-latest-ssl"));
-        browser.insert(String::from("Firefox Beta"), String::from("firefox-beta-latest-ssl"));
-        browser.insert(String::from("Firefox Developer Edition"), String::from("firefox-devedition-latest-ssl"));
-        browser.insert(String::from("Firefox Nightly"), String::from("firefox-nightly-latest-l10n-ssl"));
-        browser.insert(String::from("Firefox Extended Support Release"), String::from("firefox-esr-latest-ssl"));
-
-        /* Prefered installer */
-        let mut installer: HashMap<String,String> = HashMap::new();
-        installer.insert(String::from("Linux 32-bit"), String::from("linux"));
-        installer.insert(String::from("Linux 64-bit"), String::from("linux64"));
-        
-        /* Language */
-        let cachedir = get_cachedir(&datadir);
-        let mut downloader = Downloader::new(&cachedir);
-        let contents = downloader.download_to_string("https://www.mozilla.org/en-US/firefox/all/#product-desktop-release").unwrap();
-
-        let mut language: HashMap<String,String> = HashMap::new();
-        let rex0 = Regex::new(r#"(?s)<select id="select_desktop_release_language".*?>.*?</select>"#).unwrap();
-        let mat0 = rex0.find(&contents).unwrap();
-
-        let rex1 = Regex::new(r#"<option value="(.*?)">(.*?)</option>"#).unwrap();
-        language.insert(String::from("English (US)"), String::from("en-US"));
-        for mat in rex1.captures_iter(mat0.as_str()) {
-            let code = mat.get(1).unwrap().as_str();
-            let name = mat.get(2).unwrap().as_str();
-            language.insert(String::from(name), String::from(code));
-        }
-        
-        install(&datadir, &appdir, &browser["Firefox"], &installer["Linux 64-bit"], &language["English (US)"], |progress| {
-            match progress {
-                Progress::Status(status) => {
-                    println!("{}", status);
-                }
-                Progress::Percent(current, total) => {
-                    println!("{}/{}", current, total);
-                }
-            }
-        });
-    }
-
-    let error = process::Command::new(exe).exec();
-    panic!("Error: {:?}", error);
-}
-
 fn find_language<'a>(languages: &'a Vec<(String,String)>, lang: &str) -> Option<&'a str> {
     let found = languages.iter().find(|elem| {
         elem.0 == lang
