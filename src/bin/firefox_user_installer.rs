@@ -13,6 +13,7 @@ use std::process;
 use std::thread;
 use std::sync::{Arc, Mutex};
 use std::rc::Rc;
+use std::env;
 
 use gtk::prelude::*;
 use gtk::{
@@ -178,6 +179,37 @@ fn main2() {
     panic!("Error: {:?}", error);
 }
 
+fn find_language<'a>(languages: &'a Vec<(String,String)>, lang: &str) -> Option<&'a str> {
+    let found = languages.iter().find(|elem| {
+        elem.0 == lang
+    });
+
+    if let Some(found) = found {
+        return Some(&found.0)
+    }
+    None
+}
+
+fn detect_language(languages: &Vec<(String,String)>) -> Option<&str> {
+    if let Ok(lang) = env::var("LANG") {
+        let lang = lang.split(".").nth(0);
+        if let Some(lang) = lang {
+            let lang = lang.replace("_", "-");
+
+            /* Find with the form: en-US */
+            let found = find_language(languages, &lang);
+            if let Some(lang) = found {
+                return Some(lang);
+            }
+
+            /* If not found, find with the form: en */
+            let lang = lang.split("-").next().unwrap();
+            return find_language(languages, &lang);
+        }
+    }
+    None
+}
+
 fn on_ok(app: Rc<Application>, browser: &str, architecture: &str, lang: &str) {
     let (tx, rx) = glib::MainContext::channel(glib::PRIORITY_DEFAULT);
 
@@ -341,7 +373,9 @@ fn build_ui(app: Rc<Application>) {
         for lang in languages.iter() {
             language_combo.append(Some(&lang.0), &lang.1);
         }
-        language_combo.set_active_id(Some("en-US"));
+
+        let detected_language = detect_language(&languages);
+        language_combo.set_active_id(Some(detected_language.unwrap_or("en-US")));
         ok_button.set_sensitive(true);
         Continue(false)
     }));
