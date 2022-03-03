@@ -336,7 +336,14 @@ fn build_ui(app: Rc<Application>) {
     let mut architecture_combo = ComboBoxText::builder().build();
     architecture_combo.append(Some("linux64"), "Linux 64-bit");
     architecture_combo.append(Some("linux"), "Linux 32-bit");
-    architecture_combo.set_active_id(Some("linux64"));
+    match env::consts::ARCH {
+        "x86_64" => {
+            architecture_combo.set_active_id(Some("linux64"));
+        }
+        _ => {
+            architecture_combo.set_active_id(Some("linux"));
+        }
+    }
     grid.attach(&architecture_combo, 1, 1, 1, 1);
 
     let label = Label::builder()
