@@ -1,6 +1,6 @@
 # firefox-user-installer
 
-Automatically install an autoupdatable firefox on debian.
+A debian package to automatically install the latest firefox on debian. With autoupdate support.
 
 ## Details
 
@@ -25,7 +25,7 @@ kept up to date, even when testing enters freeze.
 
 ## Usage
 
-Download a package from the releases page, depending on whether you are
+Download a package from this project's [releases page](https://github.com/degaart/firefox-user-installer/releases) (https://github.com/degaart/firefox-user-installer/releases), depending on whether you are
 running a 32-bit or a 64-bit debian install.
 
 Then install the package using apt:
