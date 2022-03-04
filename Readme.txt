@@ -1,22 +1,26 @@
-# firefox-user-installer
+firefox-user-installer
+===========================================================================
 
 A debian package that installs firefox for the current user.
 
-## Details
+Details
+===========================================================================
 
 This package will install an icon in the application menu,
 clicking this icon will ask:
 
-- which version of firefox the user wants to download (Firefox latest, Firefox Beta, Firefix Nightly, Firefox ESR, Firefox Developer edition)
+- which version of firefox the user wants to download (Firefox latest,
+  Firefox Beta, Firefox Nightly, Firefox ESR, Firefox Developer edition)
 - which architecture (32-bit or 64-bit)
 - which language (defaults to current language)
 
-It will then download the requested firefox and install it for the current user.
-If firefox was already installed, it will just launch it normally.
+It will then download the requested firefox and install it for the current
+user. If firefox was already installed, it will just launch it normally.
 Note that the installed firefox supports auto-updating, so it can always be
 kept up to date, even when testing enters freeze.
 
-## Usage
+Usage
+===========================================================================
 
 Download a package from the releases page, depending on whether
 you are running a 32-bit or a 64-bit debian install. Then install
