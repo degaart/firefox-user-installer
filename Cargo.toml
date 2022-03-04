@@ -8,7 +8,8 @@ authors = ["degaart"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-openssl = { version = "0.10", features = ["vendored"] }
+# No need to vendor openssl anymore now that we target debian 10
+#openssl = { version = "0.10", features = ["vendored"] }
 reqwest = { version = "0.11.9", features = ["blocking"] }
 directories = "4.0.1"
 json = "0.12.4"
@@ -25,4 +26,10 @@ path = "src/main.rs"
 
 [package.metadata.deb]
 maintainer = "degaart"
-conflicts = "firefox"
+conflicts = "firefox, iceweasel (<< 45)"
+provides = "gnome-www-browser, www-browser"
+assets = [
+    [ "target/release/firefox", "usr/bin/", "755" ],
+    [ "default128.png", "usr/share/icons/default/firefox.png", "644" ],
+    [ "firefox.desktop", "usr/share/applications/", "644" ]
+]
