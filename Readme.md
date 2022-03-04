@@ -5,7 +5,7 @@ A debian package to automatically install the latest firefox on debian. With aut
 ## Details
 
 This package will install an icon in the application menu, clicking this
-icon will download the firefox from mozilla's site and install it for the current
+icon will download firefox (latest, beta, nightly, esr, or developer edition) from mozilla's site and install it for the current
 user. If firefox was already installed, it will just launch it normally.
 Note that the installed firefox supports auto-updating, so it can always be
 kept up to date, even when testing enters freeze.
