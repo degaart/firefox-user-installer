@@ -21,7 +21,7 @@ kept up to date, even when testing enters freeze.
 ## Requirements
 
 - An x86 or amd64 processor
-- debian 10 and above (submit an issue if debian 9 support is needed)
+- debian 10 and above or Ubuntu 22.04
 
 ## Usage
 
