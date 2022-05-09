@@ -25,13 +25,16 @@ kept up to date, even when testing enters freeze.
 
 ## Usage
 
-Download a package from this project's [releases page](https://github.com/degaart/firefox-user-installer/releases) (https://github.com/degaart/firefox-user-installer/releases), depending on whether you are
-running a 32-bit or a 64-bit debian install.
+Download a package from this project's [releases page](https://github.com/degaart/firefox-user-installer/releases) (https://github.com/degaart/firefox-user-installer/releases), depending on your system version:
+
+- 32-bit debian: [firefox_user_installer_0.1.0_i386.deb](https://github.com/degaart/firefox-user-installer/releases/download/v0.1.0/firefox_user_installer_0.1.0_i386.deb)
+- 64-bit debian: [firefox_user_installer_0.1.0_amd64.deb](https://github.com/degaart/firefox-user-installer/releases/download/v0.1.0/firefox_user_installer_0.1.0_amd64.deb)
+- 64-bit Ubuntu 22.04: [firefox_user_installer_0.1.0-ubuntu2204_amd64.deb](https://github.com/degaart/firefox-user-installer/releases/download/v0.1.0/firefox_user_installer_0.1.0-ubuntu2204_amd64.deb)
+- File an issue if you need support for other distros
 
 Then install the package using apt:
 
     sudo apt install ./firefox_user_installer_0.1.0_amd64.deb
-
 
 Replace `firefox_user_installer_0.1.0_amd64.deb` with the name of the package
 you downloaded.
